@@ -1,0 +1,538 @@
+{$g+}
+
+unit Grap486;
+
+interface
+
+const VidPtr  : Pointer = Ptr($a000,0);
+
+type PScr    = ^PScreen;
+     PScreen = array[0..64000-1] of Byte;
+
+     Palette = array[0..768-1] of Byte;
+
+procedure SetMode(m:Word);
+procedure SetBorder(c:Word);
+procedure WaitRetrace;
+procedure PutPixel(d:Pointer;x,y,c:Word);
+function  GetPixel(s:Pointer;x,y:Word):Byte;
+function  GetSprPixel(s:Pointer;x,y,sprnr:Word):Byte;
+
+procedure GradToSprnr(gr:Real;var s:Word);
+procedure PutSprite(s,d:Pointer;x,y,sprnr:Word);
+procedure PutSprite2(s,d:Pointer;x,y,sprnr:Word);
+procedure GetSprite(s,d:Pointer;x,y,sprnr:Word);
+
+procedure SetPal(p:Palette);
+procedure GetPal(var p:Palette);
+procedure LoadPCX(dn:string;d:PScr;o,gr:Word);
+procedure LoadPCX2(dn:string;d:PScr;o,gr:Word;var pa:Palette);
+procedure LoadRAW(dn:string;d:Pointer;var pal:Palette;o,gr:Word);
+procedure CopyMem(s,d:Pointer;dw:Word);
+
+procedure ClearPal;
+procedure FadeOut(p:Palette);
+procedure FadeIn(p:Palette);
+
+procedure Frame(x1,y1,x2,y2:Integer;col:Byte);
+
+implementation
+
+procedure SetMode(m:Word); assembler;
+asm
+  mov ax,[bp+6]
+  int 10h
+end;
+
+procedure SetBorder(c:Word); assembler;
+asm
+  mov dx,3c0h
+  mov al,11h or 32
+  out dx,al
+  mov ax,[bp+6]
+  out dx,al
+end;
+
+procedure WaitRetrace; assembler;
+asm
+  mov dx,3dah
+@@1:
+  in   al,dx
+  test al,8
+  jnz  @@1
+@@2:
+  in   al,dx
+  test al,8
+  jz   @@2
+end;
+
+procedure PutPixel(d:Pointer;x,y,c:Word); assembler;
+asm
+  mov ax,[bp+06]
+  mov bx,[bp+08]
+  mov cx,[bp+10]
+  mov es,[bp+14]
+
+  db  $66,$67,$8d,$3c,$9b;
+  shl di,6
+  add di,cx
+
+  mov es:[di],al
+end;
+
+function GetPixel(s:Pointer;x,y:Word):Byte; assembler;
+asm
+  mov ax,[bp+06]
+  mov bx,[bp+08]
+  mov es,[bp+12]
+
+  db  $66,$67,$8d,$3c,$80;
+  shl di,6
+  add di,bx
+
+  mov al,es:[di]
+  mov byte ptr [bp+14],al
+end;
+
+function GetSprPixel(s:Pointer;x,y,SprNr:Word):Byte; assembler;
+asm
+ mov ax,[bp+06]
+ mov bx,[bp+08]
+ mov cx,[bp+10]
+ mov es,[bp+14]
+
+ db  $66,$67,$8d,$3c,$c0
+ db  $66,$67,$8d,$34,$5b
+ shl si,3
+ shl di,6
+ add si,cx
+ add di,si
+ mov al,es:[di]
+ mov byte ptr [bp+16],al
+end;
+
+procedure GradToSprnr(gr:Real;var s:Word);
+begin
+  s := Round(gr/22.5);
+end;
+
+procedure PutSprite(s,d:Pointer;x,y,sprnr:Word); assembler;
+asm
+  push ds
+
+  mov ax,[bp+06]
+  mov bx,[bp+08]
+  mov cx,[bp+10]
+  mov es,[bp+14]
+  mov ds,[bp+18]
+
+  db  $66,$67,$8d,$3c,$9b;      (* lea edi,[ebx*4+ebx] *)
+  db  $66,$67,$8d,$34,$c0;      (* lea esi,[eax*8+eax] *)
+  shl di,6
+  shl si,6
+  add di,cx
+
+  xor ah,ah
+  mov bl,24
+  dec ah
+  mov cx,24*24
+  mov bh,bl
+  mov dx,320-24
+
+@@Loop:
+  mov al,ds:[si]
+  cmp al,ah
+  je  @@0
+  mov es:[di],al
+@@0:
+  inc si
+  inc di
+  dec bl
+  jnz @@1
+  add di,dx
+  mov bl,bh
+@@1:
+  dec cx
+  jnz @@Loop
+
+  pop ds
+end;
+
+procedure PutSprite2(s,d:Pointer;x,y,sprnr:Word); assembler;
+asm
+  push ds
+
+  mov ax,[bp+06]
+  mov bx,[bp+08]
+  mov cx,[bp+10]
+  mov es,[bp+14]
+  mov ds,[bp+18]
+
+  db  $66,$67,$8d,$3c,$9b;      (* lea edi[ebx*4+ebx] *)
+  db  $66,$67,$8d,$34,$c0;      (* lea esi,[eax*8+eax] *)
+  shl di,6
+  shl si,6
+  add di,cx
+
+  mov bl,24/4
+  xor ch,ch
+  mov bh,24
+  mov dx,320-24
+
+@@Loop:
+  mov cl,bl
+  db  $66
+  rep movsw
+  add di,dx
+  dec bh
+  jnz @@Loop
+
+  pop ds
+end;
+
+procedure GetSprite(s,d:Pointer;x,y,sprnr:Word); assembler;
+asm
+  push ds
+
+  mov ax,[bp+06]
+  mov bx,[bp+08]
+  mov cx,[bp+10]
+  mov es,[bp+14]
+  mov ds,[bp+18]
+
+  db  $66,$67,$8d,$34,$9b;      (* lea esi,[ebx*4+ebx] *)
+  db  $66,$67,$8d,$3c,$c0;      (* lea edi,[eax*8+eax] *)
+  shl si,6
+  shl di,6
+  add si,cx
+
+  mov bl,24/4
+  xor ch,ch
+  mov bh,24
+  mov dx,320-24
+
+@@Loop:
+  mov cl,bl
+  db  $66
+  rep movsw
+  add si,dx
+  dec bh
+  jnz @@Loop
+
+  pop ds
+end;
+
+procedure SetPal(p:Palette); assembler;
+asm
+  mov di,[bp+6]
+  mov es,[bp+8]
+  xor ah,ah
+  mov bl,3
+  mov cx,256
+  xor bh,bh
+  mov dx,3c8h
+@@Loop:
+  mov al,ah
+  out dx,al
+  inc dx
+  mov al,es:[di]
+  out dx,al
+  mov al,es:[di+1]
+  out dx,al
+  mov al,es:[di+2]
+  out dx,al
+  dec dx
+  inc ah
+  add di,bx
+  dec cx
+  jnz @@Loop
+end;
+
+procedure GetPal(var p:Palette); assembler;
+asm
+  mov si,[bp+6]
+  mov es,[bp+8]
+  xor ah,ah
+  mov cx,256
+  mov dx,3c7h
+@@Loop:
+  mov al,ah
+  out dx,al
+  add dx,2
+  in  al,dx
+  mov es:[si],al
+  in  al,dx
+  mov es:[si+1],al
+  in  al,dx
+  mov es:[si+2],al
+  inc ah
+  sub dx,2
+  add si,3
+  dec cx
+  jnz @@Loop
+end;
+
+procedure LoadPCX(dn:string;d:PScr;o,gr:Word);
+var f                 : file;
+    Tmp,p             : PScr;
+    Pal               : Palette;
+    b1, b2            : Byte;
+    i, n, Laenge, Pos : Word;
+begin
+  Assign(f,dn);
+  {$i-}
+  Reset(f,1);
+  {$i+}
+  if IOResult <> 0 then
+    begin
+      SetMode($3);
+      WriteLn('file ',dn,'.pcx does not exist');
+      asm
+        mov ax,4c00h
+        int 21h
+      end;
+    end;
+  Laenge := FileSize(f)-128-768;
+  Seek(f,128);
+
+  Pos := 0;
+  p   := Ptr(Seg(d^),Ofs(d^)+o);
+  for i:=0 to Laenge-1 do
+    begin
+    blockread(f,b1,1);
+    if b1 < 192 then
+      begin
+        p^[Pos] := b1;
+        Inc(Pos);
+      end
+    else
+      begin
+        blockread(f,b2,1);
+        for n:=1 to b1-192 do
+          begin
+            p^[Pos] := b2;
+            Inc(Pos);
+          end;
+        Inc(i);
+      end;
+    end;
+
+  Seek(f,Filesize(f)-768);
+  BlockRead(f,Pal,768);
+  Close(f);
+    for i:=0 to 768 do Pal[i] := Pal[i] shr 2;
+    SetPal(Pal);
+end;
+
+procedure LoadPCX2(dn:string;d:PScr;o,gr:Word;var pa:Palette);
+var f                 : file;
+    Tmp,p             : PScr;
+    Pal               : Palette;
+    b1, b2 : Byte;
+    i, n, Laenge, Pos : Word;
+begin
+  Assign(f,dn);
+  {$i-}
+  Reset(f,1);
+  {$i+}
+  if IOResult <> 0 then
+    begin
+      SetMode($3);
+      WriteLn('file',dn,'.pcx does not exist');
+      asm
+        mov ax,4c00h
+        int 21h
+      end;
+    end;
+  Laenge := FileSize(f)-128-768;
+  Seek(f,128);
+
+  Pos := 0;
+  p   := Ptr(Seg(d^),Ofs(d^)+o);
+  for i:=0 to Laenge-1 do
+    begin
+    blockread(f,b1,1);
+    if b1 < 192 then
+      begin
+        p^[Pos] := b1;
+        Inc(Pos);
+      end
+    else
+      begin
+        blockread(f,b2,1);
+        for n:=1 to b1-192 do
+          begin
+            p^[Pos] := b2;
+            Inc(Pos);
+          end;
+        Inc(i);
+      end;
+    end;
+
+  seek(f,filesize(f)-768);
+  BlockRead(f,Pal,768);
+  Close(f);
+
+  for i:=0 to 768-1 do Pal[i] := Pal[i] shr 2;
+  for i:=0 to 768-1 do pa[i] := pal[i];
+
+end;
+
+procedure LoadRAW(dn:string;d:Pointer;var pal:Palette;o,gr:Word);
+var f : file;
+    p : Pointer;
+begin
+  p := Ptr(Seg(d^),o);
+  Assign(f,dn+'.raw');
+  {$i-}
+  Reset(f,1);
+  {$i+}
+  if IOResult <> 0 then
+    begin
+      SetMode($3);
+      WriteLn('file ',dn,'.raw does not exist');
+      asm
+        mov ax,4c00h
+        int 21h
+      end;
+    end;
+  BlockRead(f,p^,gr);
+  Close(f);
+
+  Assign(f,dn+'.pal');
+  {$i-}
+  Reset(f,1);
+  {$i+}
+  if IOResult <> 0 then
+    begin
+      SetMode($3);
+      WriteLn('file ',dn,'.pal does not exist');
+      asm
+        mov ax,4c00h
+        int 21h
+      end;
+    end;
+  BlockRead(f,pal,768);
+  Close(f);
+end;
+
+procedure CopyMem(s,d:Pointer;dw:Word); assembler;
+asm
+  mov ax,ds
+  mov cx,[bp+06]
+  mov es,[bp+10]
+  mov ds,[bp+14]
+  xor di,di
+  xor si,si
+  db $66; rep movsw
+  mov ds,ax
+end;
+
+procedure ClearPal; assembler;
+asm
+  xor ah,ah
+  mov cx,256
+  mov dx,3c8h
+@@Loop:
+  mov al,ah
+  out dx,al
+  inc dx
+  xor al,al
+  out dx,al
+  out dx,al
+  out dx,al
+  inc ah
+  dec dx
+  dec cx
+  jnz @@Loop
+end;
+
+procedure FadeOut(p:Palette);
+var i, n : Word;
+begin
+  for i:=0 to 63 do
+    begin
+      for n:=0 to 768-1 do if p[n] > 0 then Dec(p[n]);
+      WaitRetrace;
+      SetPal(p);
+    end;
+end;
+
+procedure FadeIn(p:Palette);
+var p0   : Palette;
+    i, n : Word;
+begin
+  for i:=0 to 768-1 do p0[i] := 0;
+  SetPal(p0);
+  for i:=0 to 63 do
+    begin
+      for n:=0 to 768-1 do if p0[n] < p[n] then Inc(p0[n]);
+      WaitRetrace;
+      SetPal(p0);
+    end;
+end;
+
+procedure Frame(x1,y1,x2,y2:Integer;col:Byte); assembler;
+asm
+  mov ax,0a000h
+  mov es,ax
+
+  mov bl,col
+
+
+  mov dx,x1
+
+  mov  ax,y1
+  mov  di,ax
+  shl  di,6
+  shl  ax,8
+  add  di,ax                    (* di = 320*y1      *)
+  add  di,dx                    (* di = 320*y1 + x1 *)
+  push di
+
+  mov ax,y2
+  mov si,ax
+  shl si,6
+  shl ax,8
+  add si,ax                     (* si = 320*y2      *)
+  add si,dx                     (* si = 320*y2 + x1 *)
+
+  mov cx,x2
+  sub cx,dx
+  inc cx                        (* x2-x1+1 *)
+
+@@LoopX:
+  mov es:[di],bl
+  mov es:[si],bl
+  inc di
+  inc si
+  dec cx
+  jnz @@LoopX
+
+
+  pop di                        (* di = 320*y1 + x1 *)
+
+  mov si,y1
+  mov ax,si
+  shl si,6
+  shl ax,8
+  add si,ax                     (* si = 320*y1      *)
+  add si,x2                     (* si = 320*y1 + x2 *)
+
+  mov cx,y2
+  sub cx,y1
+  inc cx
+
+  mov dx,320
+
+@@LoopY:
+  mov es:[di],bl
+  mov es:[si],bl
+  add di,dx
+  add si,dx
+  dec cx
+  jnz @@LoopY
+end;
+
+begin
+end.
